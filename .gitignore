@@ -1,0 +1,5 @@
+*.pem
+heron-canary-*
+/deploy
+/deploy.pub
+/bait/

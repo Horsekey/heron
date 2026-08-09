@@ -1,0 +1,75 @@
+name: Generate & Deploy Canaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "space-separated owner/repo across any orgs, e.g. 'acme/decoy-api globex/decoy-x'"
+        required: true
+      secret_name:
+        description: "org secret name to store the private key under (keep it stable so rotation overwrites the same one)"
+        required: false
+        default: "PRV_KEY"
+
+permissions:
+  contents: read
+
+jobs:
+  # group the targets by org so each org gets its own job + its own app token
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - id: gen
+        env:
+          TARGETS: ${{ inputs.targets }}
+        run: |
+          set -euo pipefail
+          matrix=$(jq -cn --arg t "$TARGETS" '
+            ($t | split(" ") | map(select(length > 0))
+             | group_by(split("/")[0])
+             | map({org: (.[0] | split("/")[0]),
+                    repos: (map(split("/")[1]) | join(" "))}))
+            | {include: .}')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # make sure one org fail doesn't stop the others
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      # app token is scoped to one org, so mint a fresh one per matrix leg.
+      # app must be installed on every org you target (Administration:write + org Secrets:write).
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        id: app-token
+        with:
+          app-id: ${{ secrets.HERON_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HERON_APP_PRIVATE_KEY }}
+          owner: ${{ matrix.org }}
+
+      # deploy_keys.sh generates the key and overwrites the repo's deploy keys.
+      # deploy_organization_secrets.sh stores the private half as an org secret.
+      - name: Generate keys and deploy
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          CLIENT_ID: ${{ secrets.HERON_APP_CLIENT_ID }}
+          PRIVATE_KEY: ${{ secrets.HERON_APP_PRIVATE_KEY }}
+          ORG: ${{ matrix.org }}
+          REPOS: ${{ matrix.repos }}
+          CANARY_SECRET_NAME: ${{ inputs.secret_name }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$PRIVATE_KEY" > "$RUNNER_TEMP/app.pem"
+          for name in $REPOS; do
+            work=$(mktemp -d)
+            ( cd "$work" && "$GITHUB_WORKSPACE/deploy_keys.sh" --targets "$ORG/$name" )
+            key=$(find "$work" -name 'heron-canary-*' ! -name '*.pub')
+            "$GITHUB_WORKSPACE/deploy_organization_secrets.sh" \
+              "$CLIENT_ID" "$RUNNER_TEMP/app.pem" "$ORG/$name" "$key"
+            rm -rf "$work"
+          done
