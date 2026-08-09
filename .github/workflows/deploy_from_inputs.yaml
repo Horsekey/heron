@@ -68,9 +68,10 @@ jobs:
           printf '%s\n' "$PRIVATE_KEY" > "$RUNNER_TEMP/app.pem"
           for name in $REPOS; do
             work=$(mktemp -d)
-            ( cd "$work" && "$GITHUB_WORKSPACE/deploy_keys.sh" --targets "$ORG/$name" )
+            # invoke via bash so it works even if the exec bit didn't survive a fork/clone
+            ( cd "$work" && bash "$GITHUB_WORKSPACE/deploy_keys.sh" --targets "$ORG/$name" )
             key=$(find "$work" -name 'heron-canary-*' ! -name '*.pub')
-            "$GITHUB_WORKSPACE/deploy_organization_secrets.sh" \
+            bash "$GITHUB_WORKSPACE/deploy_organization_secrets.sh" \
               "$CLIENT_ID" "$RUNNER_TEMP/app.pem" "$ORG/$name" "$key"
             rm -rf "$work"
           done
