@@ -1,5 +1,7 @@
 # Heron: bait fishing with secrets
 
+https://www.youtube.com/watch?v=K_Tv8bpiHQo&t
+
 Hi. Was inspired to make a hacky deception tool in light of supply chain security issues. This is a tool that you can use to setup bait deploy keys that, when used, send you an alert. Detection comes from canarytokens embedded in the decoy's files (they fire when a threat actor uses them) or, if you have GitHub Enterprise, audit-log streaming for `git.clone`. GitHub emits no event for a deploy key being used, so there's no webhook that catches the clone itself. I have not found a way to consistently generate other types of tokens yet, but would love people to contribute.
 
 # outline
