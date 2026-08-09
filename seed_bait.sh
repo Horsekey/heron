@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # seed bait files into decoy repos using your own `gh auth`. run locally, one time. Give each decoy its OWN canarytoken so an alert points back at one repo.
 
-#   ./seed_bait.sh owner/repo dir    one repo from dir
+#   ./seed_bait.sh owner/repo dir    one repo from a dir you choose with .env files in it
 #   ./seed_bait.sh --map bait        every bait/<org>/<repo>/ from its own dir
 
 set -euo pipefail
