@@ -2,7 +2,11 @@
 
 https://www.youtube.com/watch?v=K_Tv8bpiHQo&t
 
-Hi. Was inspired to make a hacky deception tool in light of supply chain security issues. This is a tool that you can use to setup bait deploy keys that, when used, send you an alert. Detection comes from canarytokens embedded in the decoy's files (they fire when a threat actor uses them) or, if you have GitHub Enterprise, audit-log streaming for `git.clone`. GitHub emits no event for a deploy key being used, so there's no webhook that catches the clone itself. I have not found a way to consistently generate other types of tokens yet, but would love people to contribute.
+Hi. Was inspired to make a hacky deception tool in light of supply chain security issues. 
+
+This is a tool that you can use to setup bait SSH deploy keys as organization-level secrets that, when stolen and used, fire off alerts. On use of the stolen private key, GitHub audit logs will generate a `git.clone` event, which you can monitor for from the repositories you create and associate the fake deploy keys to.
+
+If you don't have GitHub Enterprise cloud, I have setup a way to use canarytokens embedded in the decoy repository's files that fire normally when a threat actor clones and runs over them with a script in any decoy repository since GitHub generates no webhook event to catch and other methods of detecting use seem unreliable. I have not found a reliable way to generate and maintain other types of tokens yet, but would love people to contribute and add their ideas to the mix. I have a lot of features I'm working on that have yet to be implemented so very much work-in-progress at the moment.
 
 # outline
 
