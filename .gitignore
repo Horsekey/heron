@@ -3,3 +3,13 @@ heron-canary-*
 /deploy
 /deploy.pub
 /bait/
+.pw-*
+.venv
+tokens.tsv
+fleet.tsv
+bait.tsv
+*.log
+state/
+.heron/out/
+heron.yaml
+out/
