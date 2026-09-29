@@ -1,0 +1,133 @@
+name: Canary Watch
+
+# Runs every configured canary and owns alerting.
+#
+# Secrets:
+#   HERON_FLEET          the fleet file (./heron secrets uploads it)
+#   HERON_WEBHOOK        optional: Slack/Teams incoming webhook
+#
+# Variables:
+#   HERON_REVOKE = 1     optional: burn the bait tokens that fired (kills the canary)
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write        # issues are default alert channel
+
+concurrency:
+  group: canary-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env:
+      HERON_HOME: ${{ github.workspace }}/.heron
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      # only state is cached - fleets hold live credentials and are never written here
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: .heron/state
+          key: canary-state-${{ github.run_id }}
+          restore-keys: canary-state-
+
+      - name: Run canaries
+        id: run
+        env:
+          HERON_FLEET: ${{ secrets.HERON_FLEET }}
+        run: |
+          # Actions runs run: blocks with `bash -e`, so a DETECTED exit (1) from the pipeline below would kill the step before it can set its outputs and every alerting step would then be skipped.
+          set +e
+          set -uo pipefail
+          
+          umask 077
+          mkdir -p "$HERON_HOME/state"
+          
+          # an unconfigured copy of the template is no-op
+          if [[ -z ${HERON_FLEET:-} ]]; then
+            echo "::notice::no HERON_FLEET secret set - nothing to watch yet"
+            { echo "detected=0"; echo "alert=0"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s\n' "$HERON_FLEET" > "$HERON_HOME/fleet"
+
+          bash ./heron watch | tee "$RUNNER_TEMP/watch.log"; rc=${PIPESTATUS[0]}
+          grep '^ALERT' "$RUNNER_TEMP/watch.log" > "$RUNNER_TEMP/alerts.txt" || true
+
+          # heron watch: 1 = detection, 2 = nothing watching (which is worth an alert too)
+          case $rc in
+            1) echo "detected=1"; echo "alert=1" ;;
+            2) echo "detected=0"; echo "alert=1" ;;
+            *) echo "detected=0"; echo "alert=0" ;;
+          esac >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: always()
+        with:
+          path: .heron/state
+          key: canary-state-${{ github.run_id }}
+
+      # one open issue per incident: repeats become comments, not new issues
+      - name: Alert
+        if: steps.run.outputs.alert == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DETECTED: ${{ steps.run.outputs.detected }}
+          HOOK: ${{ secrets.HERON_WEBHOOK }}
+          REVOKE: ${{ vars.HERON_REVOKE }}
+          HERON_HOME: ${{ github.workspace }}/.heron
+        run: |
+          set -uo pipefail
+          if [[ $DETECTED == 1 ]]; then
+            title="Heron: a bait credential was used"
+            { echo "A planted credential was used."; echo
+              cat "$RUNNER_TEMP/alerts.txt"; echo; echo "Run: $RUN"; } > "$RUNNER_TEMP/body.md"
+          else
+            title="Heron: nothing is watching"
+            { echo "No canary is actually watching - the alarm is OFF."
+              echo "Misconfigured fleet, or no HERON_FLEET secret."; echo
+              echo "Run: $RUN"; } > "$RUNNER_TEMP/body.md"
+          fi
+
+          # /credentials/revoke needs no auth - holding the token is the authorisation
+          if [[ ${REVOKE:-} == 1 && $DETECTED == 1 ]]; then
+            # alert lines read "ALERT <repo> [core]: ..." - collect the repos that fired
+            cut -d' ' -f2 "$RUNNER_TEMP/alerts.txt" | sort -u > "$RUNNER_TEMP/fired.txt"
+            # look up their tokens in the fleet and wrap them as {"credentials": [...]}
+            awk -F'\t' 'NR == FNR { fired[$1] = 1; next } fired[$1] && $2 != "" { print $2 }' \
+                "$RUNNER_TEMP/fired.txt" "$HERON_HOME/fleet" \
+              | jq -Rs 'split("\n") | map(select(length > 0)) | {credentials: .}' > "$RUNNER_TEMP/revoke.json"
+            n=$(jq '.credentials | length' "$RUNNER_TEMP/revoke.json")
+            if (( n > 0 )); then
+              rc=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+                     https://api.github.com/credentials/revoke \
+                     -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' \
+                     --data @"$RUNNER_TEMP/revoke.json")
+              { echo; echo "Sent $n bait credential(s) to /credentials/revoke (HTTP $rc)."
+                echo "Revocation is asynchronous. Re-run \`./heron init\` to re-plant."; } >> "$RUNNER_TEMP/body.md"
+            fi
+          fi
+
+          issue=$(gh issue list --repo "$REPO" --state open --limit 50 --json number,title \
+                    -q "[.[] | select(.title == \"$title\") | .number] | first // empty")
+          if [[ -n $issue ]]; then
+            gh issue comment "$issue" --repo "$REPO" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh issue create --repo "$REPO" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          fi
+
+          # secrets context is unreliable in a step-level if:, so test it here
+          if [[ -n $HOOK ]]; then
+            jq -Rs '{text: .}' < "$RUNNER_TEMP/body.md" \
+              | curl -sS -X POST -H 'Content-type: application/json' --data @- "$HOOK" >/dev/null
+          fi
+
+          exit 1    # a detection must fail the run

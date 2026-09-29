@@ -4,17 +4,9 @@ https://www.youtube.com/watch?v=K_Tv8bpiHQo&t
 
 Hi. Was inspired to make a hacky deception tool in light of supply chain security issues. 
 
-This is a tool that you can use to setup bait SSH deploy keys as organization-level secrets that, when stolen and used, fire off alerts. On use of the stolen private key, GitHub audit logs will generate a `git.clone` event, which you can monitor for from the repositories you create and associate the fake deploy keys to.
+This is a tool that you can use to setup bait SSH deploy keys and classic personal access tokens as organization-level secrets that, when stolen and used, fire off alerts. On use of the stolen private key, GitHub Enterprise audit logs will generate a `git.clone` event, which you can monitor for from the repositories you create and associate the fake deploy keys to.
 
-If you don't have GitHub Enterprise cloud, I have setup a way to use canarytokens embedded in the decoy repository's files that fire normally when a threat actor clones and runs over them with a script in any decoy repository since GitHub generates no webhook event to catch and other methods of detecting use seem unreliable. I have not found a reliable way to generate and maintain other types of tokens yet, but would love people to contribute and add their ideas to the mix. I have a lot of features I'm working on that have yet to be implemented so very much work-in-progress at the moment.
-
-# outline
-
-    1. generate deployment keys
-    2. associate deployment keys to fake repositories
-    3. save private key to organization secrets
-    4. alert on use of private key
-    5. on alert, regenerate and rotate secret
+If you don't have Github Enterprise, I've setup a way to generate classic personal access tokens on an account outside of your organization for alerting. This works because there is a specific header returned by GitHub via their REST API and GraphQL endpoints `x-ratelimit-used`. If we know with our action that we're spending one rate limit, we can look and alert on unexpected jumps.
 
 ## inspiration
 
@@ -22,22 +14,58 @@ If you don't have GitHub Enterprise cloud, I have setup a way to use canarytoken
 
 ## setup
 
-The entire deployment of keys relies on a GitHub app that is given specific permissions to read and write secrets (this is a scenario where write-only permissions would be ideal but impossible) and, eventually, a GitHub action that you can configure to revoke and regenerate them on use.
+There are two components to setup. 
 
-You will need to setup a decoy repository that DOES NOT contain any real information. Since we're using read-only deploy keys, when threat actors use the tokens, real data WILL be lost.
+The main functionality because it is free is the GitHub Classic Personal Access Token version. 
 
-## usage
+You can still setup deploy keys if you have log streaming setup, but detection is VERY, EXTREMELY, GIGANTICALLLY delayed.
 
-Heron is a template repository, not an action. Click "Use this template" to get your own copy. The scripts and the workflow run entirely in your org, under your app, and nothing is ever sent back here. A tool that writes org-level secrets shouldn't be something you pull from a stranger at runtime.....
+### github classic pats
 
-Then:
+1. create random GitHub bait account
+
+2. install pre-reqs
+  * curl, jq, ssh-keygen, gh
+  * pip install playwright pyyaml && playwright install chromium
+
+3. cp heron.yaml.example -> heron.yaml
+  * add one entry under `baits:` for each account. `repo:` is a bare name with no owner. `pat: true` is the default, and `deploy:` is optional
+
+4. run `./heron init`
+  * A browser window opens for each bait. Log in as that bait account when it asks. The script then:
+    - creates the decoy repo as private, and stops if it ends up public;
+    - mints a classic PAT with no expiration and only the repo scope. Classic is used because fine-grained tokens expire after at most a year, and repo is what lets the watcher read the decoy's clone traffic;
+    - writes repo<TAB>token<TAB>login to ~/.heron/fleet, with permissions 600.
+    
+    - Logins are cached in .pw-bait-<repo> browser profiles, so later runs don't ask again.
+    - Baits with pat: false get no token and are not added to the fleet file.
+
+5. run `./heron secrets <you>/<private-repo> (logged in with gh cli) to upload the fleet file to the repo you want to use for alerting.
+  * saves the fleet to `HERON_FLEET` secret
+  
+6. plant the tokens (stored in ~/.heron/ and ~/.heron/out by default) in your real repositories.
+
+7. profit :D
+
+Optional settings:
+- `HERON_WEBHOOK` secret: posts alerts to Slack or Teams.
+- `HERON_REVOKE=1` repo variable: automatically revokes any token that fires.
+
+### deploy keys (optional)
+
+The entire deployment of keys relies on a GitHub app you create with permissions to read and write secrets (this is a scenario where write-only permissions would be ideal but impossible) and, eventually, a GitHub action that you can configure to revoke and regenerate them on use.
+
+Setup a decoy repository in one organization that DOES NOT contain any real information. Since we're using read-only deploy keys, when threat actors use the tokens, real data WILL be lost.
 
 1. create a GitHub app with repo Administration:write (deploy keys) and org Secrets:write
+
 2. install it on every org that owns decoy repos you want to target
+
 3. save the app's client id and private key as `HERON_APP_CLIENT_ID` and `HERON_APP_PRIVATE_KEY` in your copy's repo secrets
+
 4. run the "Generate & Deploy Canaries" workflow, passing `targets` as a space-separated `owner/repo` list. It can span multiple orgs, the workflow groups them and mints a separate app token per org.
 
-You can also run `deploy_keys.sh` and `deploy_organization_secrets.sh` by hand the workflow is just those two scripts in a loop.
+You can also run `mint.sh` and `deploy_organization_secrets.sh` by hand the workflow is just those two scripts in a loop. `lib/provision.py` will also create deploy keys if you setup heron.yaml correctly.
 
 ## setting it up to test
 
@@ -49,35 +77,12 @@ You can also run `deploy_keys.sh` and `deploy_organization_secrets.sh` by hand t
 6. Actions → "Generate & Deploy Canaries" → run with `targets` like `acme/decoy-api globex/decoy-x`.
 7. check the deploy key and the org secret (`PRV_KEY` by default, or your `secret_name` input) landed in each org.
 
-### seeding bait (optional, one-time, local)
-
-Canarytokens are required if you do not have Enterprise Cloud (+ log streaming to catch it live) but they don't rotate with the deploy key, so seed them once locally.
-
-**Give each decoy its own token** so a fired alert points at exactly one repo. Make sure to set the token's memo to the repo path when you generate it at [canarytokens.org](https://canarytokens.org).
-
-Lay the bait out per repo, one dir each, then make sure to pepper with fake documents :D
-
-```
-bait/
-  acme/decoy-api/.env        <- token with memo "acme/decoy-api"
-  globex/decoy-x/.env        <- token with memo "globex/decoy-x"
-```
-
-Then `gh auth login` and seed them all:
-
-```
-./seed_bait.sh --map bait
-```
-
-(For a single repo: `./seed_bait.sh owner/repo somedir`.)
-
-This commits the bait files with randomized, innocuous messages. Relies on your own GitHub access.
-
 ## future features
 
-- [ ] Additional token support
-- [ ] Free organization alerting
-- [ ] Automatic creation and rotation of canary tokens and private keys
+- [x] Additional token support (Classic PATs)
+- [x] Free organization alerting
+- [x] Automatic creation and rotation of github tokens
+- [ ] Automatic creation and rotation of deploy keys
 
 ## disclaimer
 

@@ -53,7 +53,7 @@ jobs:
           private-key: ${{ secrets.HERON_APP_PRIVATE_KEY }}
           owner: ${{ matrix.org }}
 
-      # deploy_keys.sh generates the key and overwrites the repo's deploy keys.
+      # mint.sh generates the key and overwrites the repo's deploy keys.
       # deploy_organization_secrets.sh stores the private half as an org secret.
       - name: Generate keys and deploy
         env:
@@ -69,9 +69,9 @@ jobs:
           for name in $REPOS; do
             work=$(mktemp -d)
             # invoke via bash so it works even if the exec bit didn't survive a fork/clone
-            ( cd "$work" && bash "$GITHUB_WORKSPACE/deploy_keys.sh" --targets "$ORG/$name" )
+            ( cd "$work" && bash "$GITHUB_WORKSPACE/canaries/github-deploy-key/mint.sh" --targets "$ORG/$name" )
             key=$(find "$work" -name 'heron-canary-*' ! -name '*.pub')
-            bash "$GITHUB_WORKSPACE/deploy_organization_secrets.sh" \
+            bash "$GITHUB_WORKSPACE/canaries/github-deploy-key/deploy_organization_secrets.sh" \
               "$CLIENT_ID" "$RUNNER_TEMP/app.pem" "$ORG/$name" "$key"
             rm -rf "$work"
           done

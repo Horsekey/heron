@@ -1,0 +1,15 @@
+# Copy to heron.yaml and run ./heron init
+# One bait account per entry.
+# Everything is created by the bait account in its own browser session so no API token is involved anywhere in setup.
+
+baits:
+  - repo: decoy-api          # created under one bait account
+    deploy: CI Deploy        # deploy key title; private half lands in out/
+    pat: true                # mint a non-expiring PAT to plant
+
+  - repo: internal-tools    # created under a different bait account
+    deploy: prod-deploy
+    pat: false               # deploy key only, no PAT
+
+  - repo: release-scripts
+    pat: true                # PAT only, no deploy key
