@@ -6,6 +6,7 @@ baits:
   - repo: decoy-api          # created under one bait account
     deploy: CI Deploy        # deploy key title; private half lands in out/
     pat: true                # mint a non-expiring PAT to plant
+    secret: DECOY_API_TOKEN  # name to plant it under
 
   - repo: internal-tools    # created under a different bait account
     deploy: prod-deploy

@@ -5,7 +5,7 @@
 #   ./heron watch           poll them; exit 1 = DETECTED, 2 = nothing watching
 #   ./heron secrets <repo>  upload the fleet to a private repo as an Actions secret
 #
-#   $HERON_HOME/fleet   "repo<TAB>token<TAB>login[<TAB>deploy-only]"
+#   $HERON_HOME/fleet   "repo<TAB>token<TAB>login<TAB>[deploy-only]<TAB>secret"
 #   $HERON_HOME/state/  counters between runs
 #
 # Using a bait token burns its rate limit. git doesn't.
@@ -222,7 +222,7 @@ init() {
   echo "  fleet  $FLEET  ($(grep -c . "$FLEET") bait token(s))"
   echo "  keys   $out/   (deploy-key private halves)"
   echo
-  awk -F'\t' '$4 != "deploy-only" { printf "    plant %-20s %s\n", $1, $2 }' "$FLEET"
+  awk -F'\t' '$4 != "deploy-only" { printf "    plant %-20s as %-24s %s\n", $1, $5, $2 }' "$FLEET"
   echo
   echo "  next: ./heron watch     then    ./heron secrets <you>/<private-repo>"
 }

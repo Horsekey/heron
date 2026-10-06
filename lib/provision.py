@@ -3,7 +3,7 @@
 
     provision.py <heron.yaml> <out-dir> <profile-prefix>
 
-Prints "repo<TAB>token<TAB>login[<TAB>deploy-only]" per bait on stdout, messages on stderr.
+Prints "repo<TAB>token<TAB>login<TAB>[deploy-only]<TAB>secret" per bait on stdout, messages on stderr.
 """
 import os, re, subprocess, sys, time
 import yaml
@@ -25,6 +25,10 @@ def read_baits(cfg, out, prefix):
         if any(c.isspace() or c == "/" for c in repo):
             sys.exit(f"repo {repo!r} must be a bare name, no spaces or slashes")
 
+        secret = str(b.get("secret", "") or "").strip() or re.sub(r"\W", "_", repo).upper() + "_TOKEN"
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", secret) or secret.upper().startswith("GITHUB_"):
+            sys.exit(f"secret {secret!r} must be letters, digits and _, not starting with a digit or GITHUB_")
+
         title = str(b.get("deploy", "") or "").strip()
         pub = ""
         if title:
@@ -36,7 +40,7 @@ def read_baits(cfg, out, prefix):
 
         # one token per account
         specs.append({"repo": repo, "profile": prefix + repo,
-                      "pat": bool(b.get("pat", True)), "key": pub, "title": title})
+                      "pat": bool(b.get("pat", True)), "key": pub, "title": title, "secret": secret})
     return specs
 
 
@@ -214,6 +218,7 @@ def main():
             token = mint_token(page) if spec["pat"] or spec["key"] else ""
             ctx.close()
         if token:
-            print(f"{repo}\t{token}\t{login}" + ("" if spec["pat"] else "\tdeploy-only"), flush=True)
+            flag = "" if spec["pat"] else "deploy-only"
+            print(f"{repo}\t{token}\t{login}\t{flag}\t{spec['secret']}", flush=True)
 
 main()
